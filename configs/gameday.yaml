@@ -28,23 +28,23 @@ fallback_order: [alpha, alpha-eu, beta, gamma-mini]
 # YOUR client settings (read by ResilientClient). Tune them, explain them.
 # ----------------------------------------------------------------------------
 client:
-  attempt_timeout_s: 8.0
-  max_attempts_per_provider: 2      # 1 retry on the same provider, then fail over
+  attempt_timeout_s: 8.0            # > normal p99 (~4-5 s) yet leaves room for 2-3 failovers in the 30 s turn (30 s: G6 avail 0.95)
+  max_attempts_per_provider: 2      # 1 retry on the same provider, then fail over (G3 retry_ratio 0.05 <= 0.10)
   min_time_left_s: 1.0              # don't start an attempt that cannot finish
-  backoff_base_s: 0.25
+  backoff_base_s: 0.25              # full jitter in [0, 0.25 * 2^(n-1)], capped below
   backoff_cap_s: 4.0
-  retry_budget_ratio: 0.1           # retries <= ~10% of first attempts
+  retry_budget_ratio: 0.1           # retries <= ~10% of first attempts (broken breaker: G2 ampl 1.38 vs 1.60 without)
   retry_budget_min_per_s: 0.5
   retry_budget_max_tokens: 20
-  quota_cooldown_s: 300
+  quota_cooldown_s: 300             # quota does not come back in seconds; re-check every 5 min
   breaker:
-    window_size: 20
-    min_calls: 10
+    window_size: 20                 # ~2.5 s of alpha traffic at 8 rps: reacts fast, still a rate not a streak
+    min_calls: 10                   # no trip on 2 errors at night
     failure_rate_threshold: 0.5
-    slow_call_s: 5.0
+    slow_call_s: 3.0                # normal median 1.2-1.8 s; 5 s let G2 queueing through (p95 11.9 s -> 4.9 s)
     slow_rate_threshold: 0.6
-    open_duration_s: 10.0
-    half_open_max_probes: 2
+    open_duration_s: 10.0           # short enough that alpha takes traffic back within ~10-15 s of restore
+    half_open_max_probes: 2         # no thundering herd on a recovering provider
     half_open_successes: 2
 
 # ----------------------------------------------------------------------------
@@ -53,7 +53,7 @@ client:
 # wrong_answers_by_reason, tune each value and justify it in report section 8.
 # ----------------------------------------------------------------------------
 cache:
-  similarity_threshold: 0.80
-  ttl_s: 600
-  max_stale_s: 0
-  max_entries: 500
+  similarity_threshold: 0.92   # paraphrases 0.95-0.98, "near miss" intents <= 0.86: 0.92 sits in the gap
+  ttl_s: 30                    # only TTL bounds silent (no-webhook) changes: outdated_answers <= 13 on 12 seeds
+  max_stale_s: 300             # must outlast an outage (120 s on C1) with margin for longer hidden ones
+  max_entries: 200             # ~54 shared FAQ phrasings x 2 prompt versions fit comfortably
